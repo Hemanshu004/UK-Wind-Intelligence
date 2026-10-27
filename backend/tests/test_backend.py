@@ -731,3 +731,134 @@ class TestInclusiveDateHandling:
         body = response.json()
         assert body["record_count"] == 1
         assert body["records"][0]["generation"] == 19725
+
+
+# ---------------------------------------------------------------------------
+# CORS Configuration Tests
+# ---------------------------------------------------------------------------
+
+class TestCorsConfiguration:
+    """Tests for FastAPI CORS middleware configuration and response headers."""
+
+    def test_cors_preflight_production_origin(self):
+        """OPTIONS preflight from production origin returns 200 with CORS headers."""
+        response = client.options(
+            "/health",
+            headers={
+                "Origin": "https://uk-wind-intelligence.vercel.app",
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "authorization,content-type",
+            },
+        )
+        assert response.status_code == 200
+        assert (
+            response.headers.get("access-control-allow-origin")
+            == "https://uk-wind-intelligence.vercel.app"
+        )
+        assert response.headers.get("access-control-allow-credentials") == "true"
+        allow_methods = response.headers.get("access-control-allow-methods", "")
+        assert "GET" in allow_methods or "*" in allow_methods
+
+    def test_cors_normal_response_production_origin(self):
+        """GET request from production origin includes appropriate CORS headers."""
+        response = client.get(
+            "/health",
+            headers={"Origin": "https://uk-wind-intelligence.vercel.app"},
+        )
+        assert response.status_code == 200
+        assert (
+            response.headers.get("access-control-allow-origin")
+            == "https://uk-wind-intelligence.vercel.app"
+        )
+        assert response.headers.get("access-control-allow-credentials") == "true"
+
+    def test_cors_preflight_unapproved_origin_disallowed(self):
+        """OPTIONS preflight from an unapproved origin does NOT receive allow-origin."""
+        response = client.options(
+            "/health",
+            headers={
+                "Origin": "https://malicious-or-unapproved.example.com",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert response.headers.get("access-control-allow-origin") is None
+
+    def test_cors_normal_response_unapproved_origin_disallowed(self):
+        """GET request from an unapproved origin does NOT receive allow-origin."""
+        response = client.get(
+            "/health",
+            headers={"Origin": "https://malicious-or-unapproved.example.com"},
+        )
+        assert response.status_code == 200
+        assert response.headers.get("access-control-allow-origin") is None
+
+    def test_cors_preview_deployment_not_allowed_without_explicit_config(self):
+        """Preview deployments are rejected unless explicitly configured (no wildcards)."""
+        response = client.options(
+            "/health",
+            headers={
+                "Origin": "https://uk-wind-intelligence-git-feature-preview.vercel.app",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert response.headers.get("access-control-allow-origin") is None
+
+    def test_cors_get_allowed_origins_parsing(self):
+        """Verify CORS_ORIGINS parser trims whitespace and respects preview configs."""
+        from main import get_allowed_origins, PRODUCTION_ORIGIN, DEFAULT_DEV_ORIGINS
+
+        # Default fallback when missing or empty
+        defaults = get_allowed_origins(None)
+        assert PRODUCTION_ORIGIN in defaults
+        for dev_orig in DEFAULT_DEV_ORIGINS:
+            assert dev_orig in defaults
+        assert "*" not in defaults
+
+        # Empty string fallback
+        defaults_empty = get_allowed_origins("   ")
+        assert PRODUCTION_ORIGIN in defaults_empty
+        assert "*" not in defaults_empty
+
+        # Comma-separated with whitespace trimming
+        custom = get_allowed_origins(
+            " https://preview-1.vercel.app ,  https://preview-2.vercel.app , "
+        )
+        assert "https://preview-1.vercel.app" in custom
+        assert "https://preview-2.vercel.app" in custom
+        assert PRODUCTION_ORIGIN in custom
+        assert "" not in custom
+
+    def test_cors_preview_deployment_allowed_when_explicitly_configured(self):
+        """Preview deployment origin is allowed when explicitly included in CORS_ORIGINS."""
+        from fastapi import FastAPI
+        from fastapi.middleware.cors import CORSMiddleware
+        from main import get_allowed_origins
+
+        preview_origin = "https://uk-wind-intelligence-preview-123.vercel.app"
+        origins = get_allowed_origins(preview_origin)
+        assert preview_origin in origins
+
+        preview_app = FastAPI()
+        preview_app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+        @preview_app.get("/health")
+        def health():
+            return {"status": "ok"}
+
+        test_client = TestClient(preview_app)
+        res = test_client.options(
+            "/health",
+            headers={
+                "Origin": preview_origin,
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert res.status_code == 200
+        assert res.headers.get("access-control-allow-origin") == preview_origin
+

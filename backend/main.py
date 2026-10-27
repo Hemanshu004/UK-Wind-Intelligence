@@ -59,9 +59,45 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# CORS configuration to allow local frontend development
-cors_origins_env = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
-allowed_origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
+# ---------------------------------------------------------------------------
+# CORS Configuration
+# ---------------------------------------------------------------------------
+
+DEFAULT_DEV_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+PRODUCTION_ORIGIN = "https://uk-wind-intelligence.vercel.app"
+
+
+def get_allowed_origins(cors_origins_env: Optional[str] = None) -> list[str]:
+    """
+    Parse allowed CORS origins from the CORS_ORIGINS environment variable or argument.
+
+    - Reads CORS_ORIGINS as a comma-separated list and trims whitespace.
+    - If CORS_ORIGINS is missing or empty, provides safe development defaults for localhost.
+    - Ensures the production Vercel origin (https://uk-wind-intelligence.vercel.app) is allowed.
+    - Does NOT use wildcards for production.
+    - Supports preview deployments only when their exact origins are explicitly configured.
+    """
+    if cors_origins_env is None:
+        cors_origins_env = os.getenv("CORS_ORIGINS")
+
+    if cors_origins_env is not None and cors_origins_env.strip():
+        origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
+    else:
+        origins = list(DEFAULT_DEV_ORIGINS)
+
+    if PRODUCTION_ORIGIN not in origins:
+        origins.append(PRODUCTION_ORIGIN)
+
+    # Return deduplicated list while preserving order
+    return list(dict.fromkeys(origins))
+
+
+allowed_origins = get_allowed_origins()
 
 app.add_middleware(
     CORSMiddleware,
