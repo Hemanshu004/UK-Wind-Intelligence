@@ -1,0 +1,30 @@
+# Python virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Tests (unit tests not needed inside production container)
+tests/
+
+# Environment files and secrets
+.env
+.env.*
+!*.env.example
+
+# IDE and OS
+.DS_Store
+*.swp
+*.log
+.git/

@@ -1,0 +1,23 @@
+# Root .dockerignore
+.git/
+.gitignore
+README.md
+docs/
+.env
+.env.*
+!*.env.example
+.DS_Store
+
+# Backend ignores
+backend/venv/
+backend/.venv/
+backend/__pycache__/
+backend/.pytest_cache/
+backend/.coverage
+backend/tests/
+
+# Frontend ignores
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/npm-debug.log*
