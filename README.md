@@ -14,7 +14,6 @@ UK Wind Intelligence evaluates how closely day-ahead wind generation forecasts m
 | **Backend API** | [https://uk-wind-intelligence-api-afun.onrender.com/](https://uk-wind-intelligence-api-afun.onrender.com/) |
 | **Backend Health Check** | [https://uk-wind-intelligence-api-afun.onrender.com/health](https://uk-wind-intelligence-api-afun.onrender.com/health) |
 | **Interactive API Docs (Swagger)** | [https://uk-wind-intelligence-api-afun.onrender.com/docs](https://uk-wind-intelligence-api-afun.onrender.com/docs) |
-| **GitHub Repository** | [https://github.com/Hemanshu004/UK-Wind-Intelligence](https://github.com/Hemanshu004/UK-Wind-Intelligence) |
 
 > [!NOTE]
 > The backend is hosted on Render's free tier. If the service has been inactive, the first request may take up to 60 seconds while the container wakes up. Subsequent requests respond normally.
@@ -28,7 +27,7 @@ UK Wind Intelligence evaluates how closely day-ahead wind generation forecasts m
 3. [Elexon Data Sources](#3-elexon-data-sources)
 4. [Analysis Methodology](#4-analysis-methodology)
 5. [Dashboard Features](#5-dashboard-features)
-6. [Architecture and Technology Stack](#6-architecture-and-technology-stack)
+6. [Architecture and Data Flow](#6-architecture-and-data-flow)
 7. [Repository Structure](#7-repository-structure)
 8. [Local Setup Instructions](#8-local-setup-instructions)
 9. [API Reference](#9-api-reference)
@@ -246,82 +245,76 @@ Metrics display `N/A` when the backing value is `null` (e.g. MAPE when no non-ze
 
 ---
 
-## 6. Architecture and Technology Stack
+## 6. Architecture and Data Flow
 
-### 6.1 Architecture Diagram
+### 6.1 Application Architecture
 
 ```mermaid
 flowchart TD
-    subgraph External["Elexon BMRS (Public API)"]
-        FUELHH["GET /datasets/FUELHH/stream\nfuelType=WIND, half-hourly actuals"]
-        WINDFOR["GET /datasets/WINDFOR/stream\npublishDateTimeFrom/To, hourly forecasts"]
-    end
+    A["Elexon BMRS API"]
+    A1["FUELHH: Half-Hourly\nActual Wind Generation"]
+    A2["WINDFOR: Hourly\nWind Forecasts"]
 
-    subgraph Backend["FastAPI Backend — Render"]
-        ElexonClient["elexon_client.py\nhttpx async client, retries"]
-        WindData["wind_data.py\nPydantic validation and normalisation"]
-        ForecastAnalysis["forecast_analysis.py\npolicy selection, alignment, metrics"]
-        Schemas["schemas.py\nPydantic models"]
-        MainAPI["main.py\nFastAPI endpoints and CORS"]
-    end
+    B["FastAPI Backend\n(Python + Uvicorn)"]
+    C["Data Validation\nand Normalisation"]
+    D["Hourly Alignment\n(mean of two half-hourly actuals)"]
+    E["Forecast Selection Policies\n(day_ahead / rolling / latest_before_delivery)"]
+    F["Accuracy Metrics\n(MAE, RMSE, Bias, MAPE, Coverage)"]
+    G["JSON API Responses\n(/api/v1/wind/analysis)"]
 
-    subgraph Frontend["React + Vite SPA — Vercel"]
-        APIClient["src/services/api.js\nfetch, VITE_API_BASE_URL"]
-        Dashboard["Dashboard Components\nControls, KpiCards, Charts, DataTable"]
-    end
+    H["React + Vite Frontend"]
+    I["KPI Summary Cards\n(MAE, RMSE, Bias, MAPE, Coverage)"]
+    J["Time-Series Chart\n(Forecast vs Actual)"]
+    K["Signed Error Chart"]
+    L["Hourly Results Table\n(sortable, filterable, CSV export)"]
 
-    subgraph DockerLocal["Docker Compose — local"]
-        Nginx["Nginx port 3000\nSPA routing, /api proxy"]
-        Uvicorn["Uvicorn port 8000\nnon-root user, health check"]
-    end
-
-    FUELHH -->|JSON array| ElexonClient
-    WINDFOR -->|JSON array| ElexonClient
-    ElexonClient --> WindData --> ForecastAnalysis
-    ForecastAnalysis --> Schemas --> MainAPI
-    MainAPI -->|JSON REST| APIClient
-    APIClient --> Dashboard
-
-    Dashboard -.->|"local dev: npm run dev"| MainAPI
-    Nginx -.->|"/api/ proxy"| Uvicorn
-    Uvicorn -.-> MainAPI
+    A --> A1
+    A --> A2
+    A1 -->|"JSON array"| B
+    A2 -->|"JSON array"| B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F --> G
+    G -->|"HTTPS JSON"| H
+    H --> I
+    H --> J
+    H --> K
+    H --> L
 ```
 
-### 6.2 Deployment Architecture
+### 6.2 Deployment and Local Development
 
 ```mermaid
 flowchart LR
-    subgraph User["User"]
-        Browser["Browser"]
+    Browser["User Browser"]
+
+    subgraph Production["Production"]
+        Vercel["Vercel\nReact + Vite SPA\n(static CDN)"]
+        Render["Render\nFastAPI + Uvicorn\n(Docker container)"]
     end
 
-    subgraph Vercel["Vercel (Production Frontend)"]
-        ReactSPA["React + Vite SPA\nStatic assets served via CDN"]
+    subgraph ElexonAPI["External"]
+        Elexon["Elexon BMRS\nPublic REST API"]
     end
 
-    subgraph Render["Render (Production Backend)"]
-        FastAPI["FastAPI + Uvicorn\nDocker container, free tier"]
+    subgraph Local["Docker Compose (Local Dev Only)"]
+        Nginx["Frontend Container\nNginx :3000\nSPA + /api/ reverse proxy"]
+        Backend["Backend Container\nUvicorn :8000\npython:3.11-slim"]
+        Nginx -->|"/api/* and /health\nreverse proxy"| Backend
     end
 
-    subgraph Elexon["Elexon BMRS"]
-        BMRS["Public REST API\nFUELHH + WINDFOR datasets"]
-    end
+    Browser -->|"HTTPS"| Vercel
+    Vercel -->|"HTTPS /api/v1/*"| Render
+    Render -->|"HTTPS GET"| Elexon
 
-    subgraph DockerLocal["Docker Compose (Local Development)"]
-        NginxLocal["Nginx :3000\nSPA + /api/ reverse proxy"]
-        UvicornLocal["Uvicorn :8000\nFastAPI backend"]
-        NginxLocal -->|"/api/* proxy"| UvicornLocal
-    end
-
-    Browser -->|"HTTPS"| ReactSPA
-    ReactSPA -->|"HTTPS REST /api/v1/*"| FastAPI
-    FastAPI -->|"HTTPS GET"| BMRS
-    Browser -.->|"localhost:3000\n(local dev)"| NginxLocal
-    UvicornLocal -.->|"HTTPS GET"| BMRS
+    Browser -.->|"localhost:3000"| Nginx
+    Backend -.->|"HTTPS GET"| Elexon
 ```
 
 > [!NOTE]
-> In production, the frontend (Vercel) communicates with the backend (Render) via HTTPS. Docker Compose is used **only for local development** — it is not the production hosting platform. The dashed lines in the diagram represent the local development path.
+> **Solid lines** = production data flow. **Dashed lines** = local development with Docker Compose. Docker is used only for local development — it is not the production hosting platform. In production, Vercel serves the frontend and Render hosts the backend.
 
 ### 6.3 Technology Stack
 
